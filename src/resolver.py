@@ -8,7 +8,7 @@ import flask
 import psycopg2
 import urllib.parse, urllib.request
 from functools import cmp_to_key
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 from util import normalise
 from html_page import html_451_page
 
@@ -145,6 +145,53 @@ def get_components(urn):
         return (urn.split('?+')[-1], None)
     else:
         return tuple(urn.split('?+')[-1].split('?='))
+
+def make_get_metadata_function(mapping):
+    def get_metadata(urn):
+        assert type(urn) == str
+
+        connection = None
+        try:
+            normalised_urn = normalise(urn)
+            if normalised_urn == None: return 'Invalid URN', 400
+
+            connection = psycopg2.connect(**config.db_config)
+            cursor = connection.cursor()
+
+            metadata = defaultdict(list)
+            query = \
+                "SELECT metadata_key_id, metadata_order, metadata_value FROM metadata WHERE " + \
+                "urn = %(urn)s ORDER BY metadata_order"
+            cursor.execute(query, {'urn': normalised_urn})
+            for metadata_key_id, metadata_order, metadata_value in cursor.fetchall():
+                dc_attribute = mapping[metadata_key_id]
+                metadata[dc_attribute].append(metadata_value)
+
+            locations = []
+            query = \
+                "SELECT urn2url.url, source.source_description FROM urn2url, source WHERE " + \
+                "urn2url.urn = %(urn)s AND urn2url.source_id = source.source_id AND source.source_type = 'normal'"
+            cursor.execute(query, {'urn': normalised_urn})
+            for url, source_description in cursor.fetchall():
+                locations.append({'url': url, 'source': source_description})
+
+            # Flask converts this into JSON response.
+            return {
+                'urn': urn,
+                'metadata': metadata,
+                'locations': locations
+            }
+        except Exception:
+            pass
+        finally:
+            if connection:
+                cursor.close()
+                connection.close()
+
+        # This should happen only if the database connection fails:
+        return 'Internal Server Error', 500
+
+    return get_metadata
 
 @app.route('/<path:urn>')
 def handle_urn(urn):
@@ -286,6 +333,19 @@ def handle_urn(urn):
         error_page = ('<!DOCTYPE html><html><head><title>Error</title></head>'
                       '<body><h1>Error</h1><p>%s</p></body></html>' % message)
     return (error_page, http_status)
+
+def create_mapping_from_metadata_id_to_dc_attribute():
+    connection = psycopg2.connect(**config.db_config)
+    cursor = connection.cursor()
+
+    m = {}
+    cursor.execute("SELECT metadata_keys_id, metadata_key FROM metadata_keys")
+    for k, v in cursor.fetchall():
+        m[k] = v
+
+    cursor.close()
+    connection.close()
+    return m
         
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='URN resolver')
@@ -300,4 +360,7 @@ if __name__ == '__main__':
         print('Unknown resolver type.', file=sys.stderr)
         sys.exit(1)
     
+    m = create_mapping_from_metadata_id_to_dc_attribute()
+    app.add_url_rule('/rest/v1/metadata/<path:urn>', view_func=make_get_metadata_function(m))
+
     app.run(host=config.app_host, port=config.app_port)
