@@ -1,0 +1,112 @@
+CREATE TYPE public.source_format AS ENUM (
+    'OAI-PMH',
+    'Swedish',
+    'Oulu'
+);
+
+CREATE TYPE public.source_rel AS ENUM (
+    '<',
+    '<<'
+);
+
+CREATE TYPE public.url_type AS ENUM (
+    'normal',
+    'vapaakappale'
+);
+
+CREATE TABLE public.metadata (
+    urn text,
+    metadata_key_id integer,
+    metadata_order integer NOT NULL,
+    metadata_value text
+);
+
+CREATE TABLE public.metadata_keys (
+    metadata_keys_id integer NOT NULL,
+    metadata_key text NOT NULL
+);
+
+CREATE SEQUENCE public.metadata_keys_metadata_keys_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+CREATE TABLE public.priorities (
+    source_a_id integer,
+    source_b_id integer,
+    rel public.source_rel,
+    comment text
+);
+
+CREATE TABLE public.source (
+    source_id integer NOT NULL,
+    title text NOT NULL,
+    format public.source_format,
+    start_url text NOT NULL,
+    resume_url text,
+    priority integer NOT NULL,
+    email text,
+    description text,
+    source_type public.url_type,
+    url_pattern text,
+    source_description text,
+    save_metadata boolean DEFAULT false
+);
+
+ALTER TABLE public.source ALTER COLUMN source_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.source_source_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+CREATE TABLE public.urn2url (
+    urn text NOT NULL,
+    url text NOT NULL,
+    source_id integer,
+    url_type public.url_type,
+    r_component text
+);
+
+CREATE TABLE public.urnhistory (
+    urn text NOT NULL,
+    r_component text,
+    url_old text,
+    url_new text,
+    url_type_old public.url_type,
+    url_type_new public.url_type,
+    harvest_time timestamp with time zone,
+    source_url text NOT NULL
+);
+
+ALTER TABLE ONLY public.metadata_keys ALTER COLUMN metadata_keys_id SET DEFAULT nextval('public.metadata_keys_metadata_keys_id_seq'::regclass);
+ALTER TABLE ONLY public.metadata_keys
+    ADD CONSTRAINT metadata_keys_pkey PRIMARY KEY (metadata_keys_id);
+
+ALTER TABLE ONLY public.priorities
+    ADD CONSTRAINT priorities_source_a_id_source_b_id_key UNIQUE (source_a_id, source_b_id);
+
+ALTER TABLE ONLY public.source
+    ADD CONSTRAINT source_source_id_key UNIQUE (source_id);
+
+ALTER TABLE ONLY public.source
+    ADD CONSTRAINT source_title_key UNIQUE (title);
+
+CREATE INDEX urn2url_urn_idx ON public.urn2url USING btree (urn);
+
+ALTER TABLE ONLY public.metadata
+    ADD CONSTRAINT metadata_metadata_key_id_fkey FOREIGN KEY (metadata_key_id) REFERENCES public.metadata_keys(metadata_keys_id);
+
+ALTER TABLE ONLY public.priorities
+    ADD CONSTRAINT priorities_source_a_id_fkey FOREIGN KEY (source_a_id) REFERENCES public.source(source_id);
+
+ALTER TABLE ONLY public.priorities
+    ADD CONSTRAINT priorities_source_b_id_fkey FOREIGN KEY (source_b_id) REFERENCES public.source(source_id);
+
+ALTER TABLE ONLY public.urn2url
+    ADD CONSTRAINT urn2url_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.source(source_id);
